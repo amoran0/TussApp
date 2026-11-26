@@ -15,12 +15,16 @@ class TokenDataSourceImpl(
     private val authService: AuthService,
 ) : TokenDataSource {
 
+    /** Returns the stored access token, or null if there is none or it is about to expire. */
     override fun getAccessToken(): String? =
         sharedPreferences.getString(KEY_ACCESS_TOKEN, null)
+            ?.takeUnless { isExpired(KEY_ACCESS_TOKEN_EXPIRY) }
 
     override suspend fun refreshToken(): String? {
-        // If the refresh token is expired/invalid, fall back to a full password login
+        // Skip the refresh request when we already know the refresh token has expired.
+        // If the refresh token is expired/invalid, fall back to a full password login.
         val response = sharedPreferences.getString(KEY_REFRESH_TOKEN, null)
+            ?.takeUnless { isExpired(KEY_REFRESH_TOKEN_EXPIRY) }
             ?.let { refreshToken ->
                 tryOrNull("Error refreshing token", "TokenDataSourceImpl") {
                     refreshTokenFromRemote(refreshToken)
@@ -30,13 +34,19 @@ class TokenDataSourceImpl(
                 getTokenFromRemote()
             }
 
+        val now = System.currentTimeMillis()
         sharedPreferences.edit()
             .putString(KEY_ACCESS_TOKEN, response?.accessToken)
             .putString(KEY_REFRESH_TOKEN, response?.refreshToken)
+            .putLong(KEY_ACCESS_TOKEN_EXPIRY, response?.expiresIn?.let { now + it * 1000L } ?: Long.MAX_VALUE)
+            .putLong(KEY_REFRESH_TOKEN_EXPIRY, response?.refreshExpiresIn?.takeIf { it > 0 }?.let { now + it * 1000L } ?: Long.MAX_VALUE)
             .apply()
 
         return response?.accessToken
     }
+
+    private fun isExpired(expiryKey: String): Boolean =
+        System.currentTimeMillis() + EXPIRY_MARGIN_MILLIS >= sharedPreferences.getLong(expiryKey, Long.MAX_VALUE)
 
     private suspend fun getTokenFromRemote(): TokenResponseDto =
         authService
@@ -60,6 +70,11 @@ class TokenDataSourceImpl(
     private companion object {
         private const val KEY_ACCESS_TOKEN = "access_token"
         private const val KEY_REFRESH_TOKEN = "refresh_token"
+        private const val KEY_ACCESS_TOKEN_EXPIRY = "access_token_expiry"
+        private const val KEY_REFRESH_TOKEN_EXPIRY = "refresh_token_expiry"
+
+        // Renew a bit before the real expiry so requests in flight don't hit a 401
+        private const val EXPIRY_MARGIN_MILLIS = 30_000L
 
         private const val OAUTH_CLIENT_ID = "APPTUSSAM"
         private const val OAUTH_CLIENT_SECRET = "8472a9bc-6114-4975-bc35-7267977c8850"
