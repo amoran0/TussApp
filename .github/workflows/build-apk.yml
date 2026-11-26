@@ -1,10 +1,19 @@
 name: Build APK
 
-# Builds a debug APK on every push (any branch) and on demand from the Actions tab,
-# so it can be downloaded and installed from the phone without a computer.
+# Builds a debug APK on every push (any branch) and on demand from the Actions tab.
+# The APK is published as a pre-release named after the branch ("build-<branch>"),
+# so it can be downloaded straight from the phone with a fixed link, no zip.
 on:
   push:
+    branches: ['**']
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -22,9 +31,22 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: TussApp-debug-${{ github.run_number }}
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 14
+      - name: Publish APK as a pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="${GITHUB_REF_NAME//\//-}"
+          TAG="build-$BRANCH"
+          APK="TussApp-dev-$BRANCH.apk"
+          cp app/build/outputs/apk/debug/*.apk "$APK"
+
+          # Replace the previous build of this branch
+          gh release delete "$TAG" --yes --cleanup-tag || true
+
+          gh release create "$TAG" "$APK" \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Prueba: $GITHUB_REF_NAME" \
+            --notes "APK de prueba (debug) de la rama \`$GITHUB_REF_NAME\`, commit ${GITHUB_SHA::7}. Se instala junto a la versión normal (com.javdc.tussapp.dev)."
+
+          echo "Descarga: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$APK" >> "$GITHUB_STEP_SUMMARY"
