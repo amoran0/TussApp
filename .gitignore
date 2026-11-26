@@ -9,3 +9,7 @@ build/
 *.class
 app/debug/
 app/release/
+# Release signing (never commit)
+keystore.properties
+*.jks
+*.keystore
